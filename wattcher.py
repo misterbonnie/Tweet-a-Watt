@@ -4,14 +4,38 @@ from xbee import xbee
 import twitter
 import sensorhistory
 
+import optparse
+
+usage = "usage: %prog [options] file"
+parser = optparse.OptionParser(usage=usage, description=__doc__)
+
+parser.add_option('-d', '--debug', action="store_true",
+                   help='''debug''',
+                   default=False)
+parser.add_option('-g', '--graphit', action="store_true",
+                   help='''graphit''',
+                   default=False)
+
+options, args = parser.parse_args()
+
+if options.graphit == True:
+    # for graphing stuff
+    GRAPHIT = True # whether we will graph data
+else:
+    GRAPHIT = False
+if options.debug == True:
+    DEBUG = True
+else:
+    DEBUG = False
+
 # use App Engine? or log file? comment out next line if appengine
+# for graphing stuff
 LOGFILENAME = "powerdatalog.csv"   # where we will store our flatfile data
 
 if not LOGFILENAME:
     import appengineauth
     
 # for graphing stuff
-GRAPHIT = False         # whether we will graph data
 if GRAPHIT:
     import wx
     import numpy as np
@@ -20,23 +44,40 @@ if GRAPHIT:
     from pylab import *
 
 
-SERIALPORT = "COM4"    # the com/serial port the XBee is connected to
+SERIALPORT = "/dev/ttyUSB1"    # the com/serial port the XBee is connected to
 BAUDRATE = 9600      # the baud rate we talk to the xbee
 CURRENTSENSE = 4       # which XBee ADC has current draw data
 VOLTSENSE = 0          # which XBee ADC has mains voltage data
 MAINSVPP = 170 * 2     # +-170V is what 120Vrms ends up being (= 120*2sqrt(2))
 vrefcalibration = [492,  # Calibration for sensor #0
-                   498,  # Calibration for sensor #1
+                   505,  # Calibration for sensor #1
                    489,  # Calibration for sensor #2
                    492,  # Calibration for sensor #3
                    501,  # Calibration for sensor #4
                    493]  # etc... approx ((2.4v * (10Ko/14.7Ko)) / 3
 CURRENTNORM = 15.5  # conversion to amperes from ADC
 NUMWATTDATASAMPLES = 1800 # how many samples to watch in the plot window, 1 hr @ 2s samples
+MAXWATTLISTLEN = 200
 
 # Twitter username & password
 twitterusername = "username"
 twitterpassword = "password"
+
+
+watts = []
+def watt_average(watts):
+    if len(watts) == 0:
+        return None
+    else:
+        return sum(watts) / len(watts)
+
+def add_wattvalue(value, watts):
+    if len(watts) < MAXWATTLISTLEN:
+        watts.append(value)
+    else:
+        watts.pop(0)
+        watts.append(value)
+    return watts
 
 def TwitterIt(u, p, message):
     api = twitter.Api(username=u, password=p)
@@ -53,7 +94,7 @@ def TwitterIt(u, p, message):
 
 # open up the FTDI serial port to get data transmitted to xbee
 ser = serial.Serial(SERIALPORT, BAUDRATE)
-ser.open()
+#ser.open()
 
 # open our datalogging file
 logfile = None
@@ -65,12 +106,6 @@ except IOError:
     logfile.write("#Date, time, sensornum, avgWatts\n");
     logfile.flush()
             
-DEBUG = False
-if (sys.argv and len(sys.argv) > 1):
-    if sys.argv[1] == "-d":
-        DEBUG = True
-#print DEBUG
-
 if GRAPHIT: 
     # Create an animated graph
     fig = plt.figure()
@@ -120,7 +155,7 @@ def update_graph(idleevent):
         return        # we timedout
     
     xb = xbee(packet)             # parse the packet
-    #print xb.address_16
+    print xb.address_16
     if DEBUG:       # for debugging sometimes we only want one
         print xb
         
@@ -197,6 +232,9 @@ def update_graph(idleevent):
     # Print out our most recent measurements
     print str(xb.address_16)+"\tCurrent draw, in amperes: "+str(avgamp)
     print "\tWatt draw, in VA: "+str(avgwatt)
+    newatts = add_wattvalue(avgwatt, watts)
+    print "watts = %s" % ( newatts )
+    print "averagewatts = %s" % ( watt_average(watts) )
 
     if (avgamp > 13):
         return            # hmm, bad data
@@ -216,7 +254,7 @@ def update_graph(idleevent):
 
     # retreive the history for this sensor
     sensorhistory = sensorhistories.find(xb.address_16)
-    #print sensorhistory
+    print sensorhistory
     
     # add up the delta-watthr used since last reading
     # Figure out how many watt hours were used since last reading
@@ -290,12 +328,13 @@ def update_graph(idleevent):
         mainsampwatcher.set_ylim(maxamp * -1.2, maxamp * 1.2)
         wattusage.set_ylim(0, max(avgwattdata) * 1.2)
 
-if GRAPHIT:
-    timer = wx.Timer(wx.GetApp(), -1)
-    timer.Start(500)        # run an in every 'n' milli-seconds
-    wx.GetApp().Bind(wx.EVT_TIMER, update_graph)
-    plt.show()
-else:
-    while True:
-        update_graph(None)
+if __name__ == "__main__":
+    if GRAPHIT:
+        timer = wx.Timer(wx.GetApp(), -1)
+        timer.Start(100)        # run an in every 'n' milli-seconds
+        wx.GetApp().Bind(wx.EVT_TIMER, update_graph)
+        plt.show()
+    else:
+        while True:
+            update_graph(None)
 
