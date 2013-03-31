@@ -19,6 +19,7 @@ lcd = Adafruit_CharLCDPlate(busnum = 1)
 API_KEY = '4EfrclMeg7n7gRCHrPy5tECnRRKSAKxnL1QxbWhCWVRKZz0g'
 FEED = '121366'
 API_URL = '/v2/feeds/{feednum}.xml' .format(feednum = FEED)
+ENERGY_PRICE = 0.09160 # Batavia Electric
 
 usage = "usage: %prog [options] file"
 parser = optparse.OptionParser(usage=usage, description=__doc__)
@@ -293,12 +294,49 @@ def update_graph(idleevent):
         for history in sensorhistories.sensorhistories:
             wattsused += history.avgwattover5min()
             whused += history.dayswatthr
+
+        kwhused = whused/1000
+        avgwatt = sensorhistory.avgwattover5min()
+        cost = kwhused * ENERGY_PRICE 
+        cost = "%.2f" % cost
             
         message = "Currently using "+str(int(wattsused))+" Watts, "+str(int(whused))+" Wh today so far #tweetawatt"
  
+        # Average watts
         pac = eeml.Pachube(API_URL, API_KEY)
-        pac.update(eeml.Data(0, sensorhistory.avgwattover5min(),minValue=0, maxValue=None, unit=eeml.Unit(name='watt', type='derivedSI', symbol='W')))
-        pac.update(eeml.Data(1, whused, minValue=0, maxValue=None, unit=eeml.Unit(name='watt', type='derivedSI', symbol='W')))
+        pac.update(eeml.Data(0, 
+                             avgwatt, 
+                             minValue=0, 
+                             maxValue=None, 
+                             unit=eeml.Unit(name='watt', 
+                                            type='derivedSI', 
+                                            symbol='W',
+                                           )
+                             )
+                  )
+        # total KWh
+        pac.update(eeml.Data(1, 
+                             kwhused, 
+                             minValue=0, 
+                             maxValue=None, 
+                             unit=eeml.Unit(name='kilowatthour', 
+                                                  type='derivedSI', 
+                                                  symbol='KWh',
+                                           )
+                            )
+                  )
+
+        # Cost
+        pac.update(eeml.Data(2, 
+                             cost, 
+                             minValue=0, 
+                             maxValue=None, 
+                             unit=eeml.Unit(name='cost', 
+                                            type='contextDependentUnits', 
+                                            symbol='$'
+                                            )
+                             )
+                  )
         try:
             print "pachube update: try" 
             pac.put()
