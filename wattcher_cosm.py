@@ -161,6 +161,7 @@ sensorhistories = sensorhistory.SensorHistories(logfile)
 print sensorhistories
 
 # the 'main loop' runs once a second or so
+
 def update_graph(idleevent):
     global avgwattdataidx, sensorhistories, twittertimer, DEBUG
      
@@ -247,9 +248,9 @@ def update_graph(idleevent):
     # Print out our most recent measurements
     print str(xb.address_16)+"\tCurrent draw, in amperes: "+str(avgamp)
     # clear display
-    lcd.clear()
-    lcd.backlight(lcd.OFF)
-    lcd.message("Watt draw, in VA: \n"+str(avgwatt))
+    #lcd.clear()
+    #lcd.backlight(lcd.OFF)
+    #lcd.message("Watt draw, in VA: \n"+str(avgwatt))
     print "\tWatt draw, in VA: "+str(avgwatt)
     newatts = add_wattvalue(avgwatt, watts)
     #print "watts = %s" % ( newatts )
@@ -287,7 +288,7 @@ def update_graph(idleevent):
     currminute = (int(time.time())/60) % 10
     # Figure out if its been five minutes since our last save
     if (((time.time() - sensorhistory.fiveminutetimer) >= 60.0)
-        and (currminute % 5 == 0)
+        and (currminute % 2 == 0)
         ):
         wattsused = 0
         whused = 0
@@ -301,7 +302,11 @@ def update_graph(idleevent):
         cost = "%.2f" % cost
             
         message = "Currently using "+str(int(wattsused))+" Watts, "+str(int(whused))+" Wh today so far #tweetawatt"
+        lcd_message = "Cur: %.2f" % avgwatt + "W\n%.2f" % kwhused + "kWh $" + cost
  
+    	lcd.clear()
+    	lcd.backlight(lcd.OFF)
+    	lcd.message(lcd_message);
         # Average watts
         pac = eeml.Pachube(API_URL, API_KEY)
         pac.update(eeml.Data(0, 
