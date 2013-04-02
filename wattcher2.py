@@ -1,0 +1,326 @@
+#!/usr/bin/env python
+import serial, time, datetime, sys
+import eeml
+from xbee import xbee
+import twitter
+import sensorhistory
+from time import sleep
+import optparse
+from Adafruit_I2C import Adafruit_I2C
+from Adafruit_MCP230xx import Adafruit_MCP230XX
+from Adafruit_CharLCDPlate import Adafruit_CharLCDPlate
+
+import smbus
+
+# initialize the LCD plate
+# use busnum = 0 for raspi version 1 (256MB) and busnum = 1 for version 2
+lcd = Adafruit_CharLCDPlate(busnum = 1)
+  
+API_KEY = '4EfrclMeg7n7gRCHrPy5tECnRRKSAKxnL1QxbWhCWVRKZz0g'
+FEED = '121366'
+API_URL = '/v2/feeds/{feednum}.xml' .format(feednum = FEED)
+ENERGY_PRICE = 0.09160 # Batavia Electric
+
+usage = "usage: %prog [options] file"
+parser = optparse.OptionParser(usage=usage, description=__doc__)
+
+parser.add_option('-d', '--debug', action="store_true",
+                   help='''debug''',
+                   default=False)
+
+options, args = parser.parse_args()
+
+# for graphing stuff
+LOGFILENAME = "powerdatalog.csv"   # where we will store our flatfile data
+
+SERIALPORT = "/dev/ttyUSB0"    # the com/serial port the XBee is connected to
+BAUDRATE = 9600      # the baud rate we talk to the xbee
+CURRENTSENSE = 4       # which XBee ADC has current draw data
+VOLTSENSE = 0          # which XBee ADC has mains voltage data
+MAINSVPP = 170 * 2     # +-170V is what 120Vrms ends up being (= 120*2sqrt(2))
+vrefcalibration = [492,  # Calibration for sensor #0
+                   505,  # Calibration for sensor #1
+                   489,  # Calibration for sensor #2
+                   492,  # Calibration for sensor #3
+                   501,  # Calibration for sensor #4
+                   493]  # etc... approx ((2.4v * (10Ko/14.7Ko)) / 3
+CURRENTNORM = 15.5  # conversion to amperes from ADC
+NUMWATTDATASAMPLES = 1800 # how many samples to watch in the plot window, 1 hr @ 2s samples
+MAXWATTLISTLEN = 200
+
+watts = []
+def watt_average(watts):
+    if len(watts) == 0:
+        return None
+    else:
+        return sum(watts) / len(watts)
+
+def add_wattvalue(value, watts):
+    if len(watts) < MAXWATTLISTLEN:
+        watts.append(value)
+    else:
+        watts.pop(0)
+        watts.append(value)
+    return watts
+
+# open up the FTDI serial port to get data transmitted to xbee
+ser = serial.Serial(SERIALPORT, BAUDRATE)
+#ser.open()
+
+# open our datalogging file
+try:
+    logfile = open(LOGFILENAME, 'r+')
+except IOError:
+    # didn't exist yet
+    logfile = open(LOGFILENAME, 'w+')
+    logfile.write("#Date, time, sensornum, avgWatts\n");
+    logfile.flush()
+            
+sensorhistories = sensorhistory.SensorHistories(logfile)
+
+# the 'main loop' runs once a second or so
+
+class XBeeKillaWatt():
+    ''' get power stats from KillAWatt over XBee'''
+
+    def __init__(self, serialport="/dev/ttyUSB0", baudrate='9600'):
+        self.ser = serial.Serial(serialport, baudrate
+
+    def _get_xbpacket(self):
+        # grab one packet from the xbee, or timeout
+        try:
+            packet = xbee.find_packet(self.ser)
+            self.xb = xbee(packet)             # parse the packet
+            return xb
+        except:
+            return None        # we timedout
+    
+    def _get_voltagedata(self):
+        # we'll only store n-1 samples since the first one is usually messed up
+        self.voltagedata = [-1] * (len(self.xb.analog_samples) - 1)
+
+        # grab 1 thru n of the ADC readings, referencing the ADC constants
+        # and store them in nice little arrays
+        for i in range(len(voltagedata)):
+            self.voltagedata[i] = self.xb.analog_samples[i+1][self.voltsense]
+
+    def _get_ampdata(self):
+        self.ampdata = [-1] * (len(xb.analog_samples ) -1)
+        for i in range(len(ampdata)):
+            self.ampdata[i]
+            self.ampdata[i] = self.xb.analog_sampled[i+1][self.currentsense]
+        
+        # we'll only store n-1 samples since the first one is usually messed up
+        voltagedata = [-1] * (len(xb.analog_samples) - 1)
+        # grab 1 thru n of the ADC readings, referencing the ADC constants
+        # and store them in nice little arrays
+        for i in range(len(voltagedata)):
+            voltagedata[i] = xb.analog_samples[i+1][VOLTSENSE]
+            ampdata[i] = xb.analog_samples[i+1][CURRENTSENSE]
+
+        if DEBUG:
+            print "ampdata: "+str(ampdata)
+            print "voltdata: "+str(voltagedata)
+        # get max and min voltage and normalize the curve to '0'
+        # to make the graph 'AC coupled' / signed
+        min_v = 1024     # XBee ADC is 10 bits, so max value is 1023
+        max_v = 0
+        for i in range(len(voltagedata)):
+            if (min_v > voltagedata[i]):
+                min_v = voltagedata[i]
+            if (max_v < voltagedata[i]):
+                max_v = voltagedata[i]
+
+        # figure out the 'average' of the max and min readings
+        avgv = (max_v + min_v) / 2
+        # also calculate the peak to peak measurements
+        vpp =  max_v-min_v
+
+        for i in range(len(voltagedata)):
+            #remove 'dc bias', which we call the average read
+            voltagedata[i] -= avgv
+            # We know that the mains voltage is 120Vrms = +-170Vpp
+            voltagedata[i] = (voltagedata[i] * MAINSVPP) / vpp
+
+        # normalize current readings to amperes
+        for i in range(len(ampdata)):
+            # VREF is the hardcoded 'DC bias' value, its
+            # about 492 but would be nice if we could somehow
+            # get this data once in a while maybe using xbeeAPI
+            if vrefcalibration[xb.address_16]:
+                ampdata[i] -= vrefcalibration[xb.address_16]
+            else:
+                ampdata[i] -= vrefcalibration[0]
+            # the CURRENTNORM is our normalizing constant
+            # that converts the ADC reading to Amperes
+            ampdata[i] /= CURRENTNORM
+
+        print "Voltage, in volts: ", voltagedata
+        print "Current, in amps:  ", ampdata
+
+        # calculate instant. watts, by multiplying V*I for each sample point
+        wattdata = [0] * len(voltagedata)
+        for i in range(len(wattdata)):
+        wattdata[i] = voltagedata[i] * ampdata[i]
+
+        # sum up the current drawn over one 1/60hz cycle
+        avgamp = 0
+        # 16.6 samples per second, one cycle = ~17 samples
+        # close enough for govt work :(
+        for i in range(17):
+            avgamp += abs(ampdata[i])
+        avgamp /= 17.0
+
+        # sum up power drawn over one 1/60hz cycle
+        avgwatt = 0
+        # 16.6 samples per second, one cycle = ~17 samples
+        for i in range(17):         
+            avgwatt += abs(wattdata[i])
+        avgwatt /= 17.0
+
+
+        # Print out our most recent measurements
+        print str(xb.address_16)+"\tCurrent draw, in amperes: "+str(avgamp)
+        # clear display
+        #lcd.clear()
+        #lcd.backlight(lcd.OFF)
+        #lcd.message("Watt draw, in VA: \n"+str(avgwatt))
+        print "\tWatt draw, in VA: "+str(avgwatt)
+        newatts = add_wattvalue(avgwatt, watts)
+        #print "watts = %s" % ( newatts )
+        print "averagewatts = %s" % ( watt_average(watts) )
+
+        if (avgamp > 13):
+            return            # hmm, bad data
+
+        # retreive the history for this sensor
+        sensorhistory = sensorhistories.find(xb.address_16)
+        #print sensorhistory
+    
+        # add up the delta-watthr used since last reading
+        # Figure out how many watt hours were used since last reading
+        elapsedseconds = time.time() - sensorhistory.lasttime
+        dwatthr = (avgwatt * elapsedseconds) / (60.0 * 60.0)  # 60 seconds in 60 minutes = 1 hr
+        sensorhistory.lasttime = time.time()
+        print "\t\tWh used in last ",elapsedseconds," seconds: ",dwatthr
+        sensorhistory.addwatthr(dwatthr)
+    
+        # Determine the minute of the hour (ie 6:42 -> '42')
+        currminute = (int(time.time())/60) % 10
+        # Figure out if its been five minutes since our last save
+        if (((time.time() - sensorhistory.fiveminutetimer) >= 60.0)
+            and (currminute % 2 == 0)
+            ):
+            wattsused = 0
+            whused = 0
+            for history in sensorhistories.sensorhistories:
+                wattsused += history.avgwattover5min()
+                whused += history.dayswatthr
+
+        kwhused = whused/1000
+        avgwatt = sensorhistory.avgwattover5min()
+        cost = kwhused * ENERGY_PRICE 
+        cost = "%.2f" % cost
+            
+        message = "Currently using "+str(int(wattsused))+" Watts, "+str(int(whused))+" Wh today so far #tweetawatt"
+        lcd_message = "Cur: %.2f" % avgwatt + "W\n%.2f" % kwhused + "kWh $" + cost
+ 
+    	lcd.clear()
+    	lcd.backlight(lcd.OFF)
+    	lcd.message(lcd_message);
+        # Average watts
+        pac = eeml.Pachube(API_URL, API_KEY)
+        pac.update(eeml.Data(0, 
+                             avgwatt, 
+                             minValue=0, 
+                             maxValue=None, 
+                             unit=eeml.Unit(name='watt', type='derivedSI', symbol='W',)
+                             )
+                  )
+        # total KWh
+        pac.update(eeml.Data(1, 
+                             kwhused, 
+                             minValue=0, 
+                             maxValue=None, 
+                             unit=eeml.Unit(name='kilowatthour', type='derivedSI', symbol='KWh',)
+                            )
+                  )
+
+        # Cost
+        pac.update(eeml.Data(2, 
+                             cost, 
+                             minValue=0, 
+                             maxValue=None, 
+                             unit=eeml.Unit(name='cost', type='contextDependentUnits', symbol='$')
+                             )
+                  )
+        try:
+            print "pachube update: try" 
+            pac.put()
+            print "pachube update: OK" 
+        except:
+            print "pachube update failed" 
+        # Print out debug data, Wh used in last 5 minutes
+        avgwattsused = sensorhistory.avgwattover5min()
+        print time.strftime("%Y %m %d, %H:%M")+", "+str(sensorhistory.sensornum)+", "+str(sensorhistory.avgwattover5min())+"\n"
+               
+        # Lets log it! Seek to the end of our log file
+        if logfile:
+            logfile.seek(0, 2) # 2 == SEEK_END. ie, go to the end of the file
+            logfile.write(time.strftime("%Y %m %d, %H:%M")+", "+
+                          str(sensorhistory.sensornum)+", "+
+                          str(sensorhistory.avgwattover5min())+"\n")
+            logfile.flush()
+            
+        # Or, send it to the app engine
+        if not LOGFILENAME:
+            appengineauth.sendreport(xb.address_16, avgwattsused)
+        
+        
+        # Reset our 5 minute timer
+        sensorhistory.reset5mintimer()
+        
+
+    # We're going to twitter at midnight, 8am and 4pm
+    # Determine the hour of the day (ie 6:42 -> '6')
+    currhour = datetime.datetime.now().hour
+    # twitter every 8 hours
+    if (True): #((time.time() - twittertimer) >= 3660.0) and (currhour % 8 == 0)):
+        print "twittertime!"
+        twittertimer = time.time();
+        # sum up all the sensors' data
+        wattsused = 0
+        whused = 0
+        for history in sensorhistories.sensorhistories:
+            wattsused += history.avgwattover5min()
+            whused += history.dayswatthr
+            
+        message = "Currently using "+str(int(wattsused))+" Watts, "+str(int(whused))+" Wh today so far #tweetawatt"
+        # write something ourselves
+        if message:
+            print message
+
+    if GRAPHIT:
+        # Redraw our pretty picture
+        fig.canvas.draw_idle()
+        # Update with latest data
+        wattusageline.set_ydata(avgwattdata)
+        voltagewatchline.set_ydata(voltagedata)
+        ampwatchline.set_ydata(ampdata)
+        # Update our graphing range so that we always see all the data
+        maxamp = max(ampdata)
+        minamp = min(ampdata)
+        maxamp = max(maxamp, -minamp)
+        mainsampwatcher.set_ylim(maxamp * -1.2, maxamp * 1.2)
+        wattusage.set_ylim(0, max(avgwattdata) * 1.2)
+
+if __name__ == "__main__":
+    if GRAPHIT:
+        timer = wx.Timer(wx.GetApp(), -1)
+        timer.Start(100)        # run an in every 'n' milli-seconds
+        wx.GetApp().Bind(wx.EVT_TIMER, update_graph)
+        plt.show()
+    else:
+        while True:
+            update_graph(None)
+
