@@ -80,13 +80,29 @@ sensorhistories = sensorhistory.SensorHistories(logfile)
 
 # the 'main loop' runs once a second or so
 
-class XBeeKillaWatt():
+class XBeePowerData(xbeepacket):
     ''' get power stats from KillAWatt over XBee'''
 
     def __init__(self, serialport="/dev/ttyUSB0", baudrate='9600'):
-        self.ser = serial.Serial(serialport, baudrate
+        self.ser = serial.Serial(serialport, baudrate)
+        self.voltagedata = self._get_voltagedata()
+        self.ampdata = self._get_voltagedata()
 
-    def _get_xbpacket(self):
+   def watt_average(watts):
+       if len(watts) == 0:
+           return None
+       else:
+           return sum(watts) / len(watts)
+
+   def add_wattvalue(value, watts):
+       if len(watts) < MAXWATTLISTLEN:
+           watts.append(value)
+       else:
+           watts.pop(0)
+        watts.append(value)
+    return watts
+
+    def get_xbpacket(self):
         # grab one packet from the xbee, or timeout
         try:
             packet = xbee.find_packet(self.ser)
@@ -95,7 +111,7 @@ class XBeeKillaWatt():
         except:
             return None        # we timedout
     
-    def _get_voltagedata(self):
+    def get_voltagedata(self):
         # we'll only store n-1 samples since the first one is usually messed up
         self.voltagedata = [-1] * (len(self.xb.analog_samples) - 1)
 
@@ -103,45 +119,18 @@ class XBeeKillaWatt():
         # and store them in nice little arrays
         for i in range(len(voltagedata)):
             self.voltagedata[i] = self.xb.analog_samples[i+1][self.voltsense]
-
-    def _get_ampdata(self):
-        self.ampdata = [-1] * (len(xb.analog_samples ) -1)
-        for i in range(len(ampdata)):
-            self.ampdata[i]
-            self.ampdata[i] = self.xb.analog_sampled[i+1][self.currentsense]
-        
-        # we'll only store n-1 samples since the first one is usually messed up
-        voltagedata = [-1] * (len(xb.analog_samples) - 1)
-        # grab 1 thru n of the ADC readings, referencing the ADC constants
-        # and store them in nice little arrays
-        for i in range(len(voltagedata)):
-            voltagedata[i] = xb.analog_samples[i+1][VOLTSENSE]
-            ampdata[i] = xb.analog_samples[i+1][CURRENTSENSE]
-
-        if DEBUG:
-            print "ampdata: "+str(ampdata)
-            print "voltdata: "+str(voltagedata)
-        # get max and min voltage and normalize the curve to '0'
-        # to make the graph 'AC coupled' / signed
-        min_v = 1024     # XBee ADC is 10 bits, so max value is 1023
-        max_v = 0
-        for i in range(len(voltagedata)):
-            if (min_v > voltagedata[i]):
-                min_v = voltagedata[i]
-            if (max_v < voltagedata[i]):
-                max_v = voltagedata[i]
-
-        # figure out the 'average' of the max and min readings
-        avgv = (max_v + min_v) / 2
-        # also calculate the peak to peak measurements
-        vpp =  max_v-min_v
-
         for i in range(len(voltagedata)):
             #remove 'dc bias', which we call the average read
             voltagedata[i] -= avgv
             # We know that the mains voltage is 120Vrms = +-170Vpp
             voltagedata[i] = (voltagedata[i] * MAINSVPP) / vpp
+        return voltagedata
 
+    def get_ampdata(self):
+        ampdata = [-1] * (len(self.xb.analog_samples ) -1)
+        for i in range(len(ampdata)):
+            ampdata[i]
+            ampdata[i] = self.xb.analog_sampled[i+1][self.currentsense]
         # normalize current readings to amperes
         for i in range(len(ampdata)):
             # VREF is the hardcoded 'DC bias' value, its
@@ -154,14 +143,32 @@ class XBeeKillaWatt():
             # the CURRENTNORM is our normalizing constant
             # that converts the ADC reading to Amperes
             ampdata[i] /= CURRENTNORM
+        return ampdata
 
-        print "Voltage, in volts: ", voltagedata
-        print "Current, in amps:  ", ampdata
+    def average_v(voltagedata)        
+        # get max and min voltage and normalize the curve to '0'
+        # to make the graph 'AC coupled' / signed
 
+        min_v = 1024     # XBee ADC is 10 bits, so max value is 1023
+        max_v = 0
+
+        for i in range(len(voltagedata)):
+            if (min_v > voltagedata[i]):
+                min_v = voltagedata[i]
+            if (max_v < voltagedata[i]):
+                max_v = voltagedata[i]
+
+        # figure out the 'average' of the max and min readings
+        avgv = (max_v + min_v) / 2
+        # also calculate the peak to peak measurements
+        vpp =  max_v-min_v
+
+    def wattdata(voltagedata, ampdata)
         # calculate instant. watts, by multiplying V*I for each sample point
         wattdata = [0] * len(voltagedata)
         for i in range(len(wattdata)):
         wattdata[i] = voltagedata[i] * ampdata[i]
+        return wattdata
 
         # sum up the current drawn over one 1/60hz cycle
         avgamp = 0
@@ -180,12 +187,9 @@ class XBeeKillaWatt():
 
 
         # Print out our most recent measurements
-        print str(xb.address_16)+"\tCurrent draw, in amperes: "+str(avgamp)
-        # clear display
-        #lcd.clear()
-        #lcd.backlight(lcd.OFF)
-        #lcd.message("Watt draw, in VA: \n"+str(avgwatt))
-        print "\tWatt draw, in VA: "+str(avgwatt)
+        #print str(xb.address_16)+"\tCurrent draw, in amperes: "+str(avgamp)
+        #print "\tWatt draw, in VA: "+str(avgwatt)
+
         newatts = add_wattvalue(avgwatt, watts)
         #print "watts = %s" % ( newatts )
         print "averagewatts = %s" % ( watt_average(watts) )
@@ -195,7 +199,6 @@ class XBeeKillaWatt():
 
         # retreive the history for this sensor
         sensorhistory = sensorhistories.find(xb.address_16)
-        #print sensorhistory
     
         # add up the delta-watthr used since last reading
         # Figure out how many watt hours were used since last reading
@@ -222,12 +225,12 @@ class XBeeKillaWatt():
         cost = kwhused * ENERGY_PRICE 
         cost = "%.2f" % cost
             
-        message = "Currently using "+str(int(wattsused))+" Watts, "+str(int(whused))+" Wh today so far #tweetawatt"
         lcd_message = "Cur: %.2f" % avgwatt + "W\n%.2f" % kwhused + "kWh $" + cost
  
     	lcd.clear()
     	lcd.backlight(lcd.OFF)
     	lcd.message(lcd_message);
+
         # Average watts
         pac = eeml.Pachube(API_URL, API_KEY)
         pac.update(eeml.Data(0, 
@@ -262,7 +265,7 @@ class XBeeKillaWatt():
             print "pachube update failed" 
         # Print out debug data, Wh used in last 5 minutes
         avgwattsused = sensorhistory.avgwattover5min()
-        print time.strftime("%Y %m %d, %H:%M")+", "+str(sensorhistory.sensornum)+", "+str(sensorhistory.avgwattover5min())+"\n"
+        #print time.strftime("%Y %m %d, %H:%M")+", "+str(sensorhistory.sensornum)+", "+str(sensorhistory.avgwattover5min())+"\n"
                
         # Lets log it! Seek to the end of our log file
         if logfile:
@@ -272,55 +275,9 @@ class XBeeKillaWatt():
                           str(sensorhistory.avgwattover5min())+"\n")
             logfile.flush()
             
-        # Or, send it to the app engine
-        if not LOGFILENAME:
-            appengineauth.sendreport(xb.address_16, avgwattsused)
-        
-        
         # Reset our 5 minute timer
         sensorhistory.reset5mintimer()
         
-
-    # We're going to twitter at midnight, 8am and 4pm
-    # Determine the hour of the day (ie 6:42 -> '6')
-    currhour = datetime.datetime.now().hour
-    # twitter every 8 hours
-    if (True): #((time.time() - twittertimer) >= 3660.0) and (currhour % 8 == 0)):
-        print "twittertime!"
-        twittertimer = time.time();
-        # sum up all the sensors' data
-        wattsused = 0
-        whused = 0
-        for history in sensorhistories.sensorhistories:
-            wattsused += history.avgwattover5min()
-            whused += history.dayswatthr
-            
-        message = "Currently using "+str(int(wattsused))+" Watts, "+str(int(whused))+" Wh today so far #tweetawatt"
-        # write something ourselves
-        if message:
-            print message
-
-    if GRAPHIT:
-        # Redraw our pretty picture
-        fig.canvas.draw_idle()
-        # Update with latest data
-        wattusageline.set_ydata(avgwattdata)
-        voltagewatchline.set_ydata(voltagedata)
-        ampwatchline.set_ydata(ampdata)
-        # Update our graphing range so that we always see all the data
-        maxamp = max(ampdata)
-        minamp = min(ampdata)
-        maxamp = max(maxamp, -minamp)
-        mainsampwatcher.set_ylim(maxamp * -1.2, maxamp * 1.2)
-        wattusage.set_ylim(0, max(avgwattdata) * 1.2)
-
 if __name__ == "__main__":
-    if GRAPHIT:
-        timer = wx.Timer(wx.GetApp(), -1)
-        timer.Start(100)        # run an in every 'n' milli-seconds
-        wx.GetApp().Bind(wx.EVT_TIMER, update_graph)
-        plt.show()
-    else:
-        while True:
-            update_graph(None)
+    pass
 
