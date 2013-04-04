@@ -63,62 +63,58 @@ def add_wattvalue(value, watts):
         watts.append(value)
     return watts
 
-# open up the FTDI serial port to get data transmitted to xbee
-ser = serial.Serial(SERIALPORT, BAUDRATE)
-#ser.open()
-
-# open our datalogging file
-try:
-    logfile = open(LOGFILENAME, 'r+')
-except IOError:
-    # didn't exist yet
-    logfile = open(LOGFILENAME, 'w+')
-    logfile.write("#Date, time, sensornum, avgWatts\n");
-    logfile.flush()
-            
-sensorhistories = sensorhistory.SensorHistories(logfile)
-
 # the 'main loop' runs once a second or so
 
-class XBeePowerData(xbeepacket):
+class XBeePowerData():
     ''' get power stats from KillAWatt over XBee'''
+    def __init__(self, ser, voltsense=0, currentsense=4):
+        self.ser = ser
+        self.voltsense = voltsense
+        self.currentsense = currentsense
 
-    def __init__(self, serialport="/dev/ttyUSB0", baudrate='9600'):
-        self.ser = serial.Serial(serialport, baudrate)
-        self.voltagedata = self._get_voltagedata()
-        self.ampdata = self._get_voltagedata()
+    def watt_average(self, watts):
+        if len(watts) == 0:
+            return None
+        else:
+            return sum(watts) / len(watts)
 
-   def watt_average(watts):
-       if len(watts) == 0:
-           return None
-       else:
-           return sum(watts) / len(watts)
+    def add_wattvalue(self, value, watts):
+        if len(watts) < MAXWATTLISTLEN:
+            watts.append(value)
+        else:
+            watts.pop(0)
+            watts.append(value)
+        return watts
 
-   def add_wattvalue(value, watts):
-       if len(watts) < MAXWATTLISTLEN:
-           watts.append(value)
-       else:
-           watts.pop(0)
-        watts.append(value)
-    return watts
-
-    def get_xbpacket(self):
+    def _get_xbpacket(self):
         # grab one packet from the xbee, or timeout
-        try:
-            packet = xbee.find_packet(self.ser)
-            self.xb = xbee(packet)             # parse the packet
-            return xb
-        except:
-            return None        # we timedout
-    
-    def get_voltagedata(self):
+        packet = xbee.find_packet(self.ser)
+        if not packet:
+            return
+        xb = xbee(packet)             # parse the packet
+        return xb
+   
+    def _get_voltagedata(self):
         # we'll only store n-1 samples since the first one is usually messed up
-        self.voltagedata = [-1] * (len(self.xb.analog_samples) - 1)
-
+        voltagedata = [-1] * (len(self.xb.analog_samples) - 1)
         # grab 1 thru n of the ADC readings, referencing the ADC constants
         # and store them in nice little arrays
         for i in range(len(voltagedata)):
-            self.voltagedata[i] = self.xb.analog_samples[i+1][self.voltsense]
+            voltagedata[i] = self.xb.analog_samples[i+1][self.voltsense]
+        
+        min_v = 1024 # XBee ADC is 10 bits, so max value is 1023
+        max_v = 0
+        for i in range(len(voltagedata)):
+            if (min_v > voltagedata[i]):
+                min_v = voltagedata[i]
+            if (max_v < voltagedata[i]):
+                max_v = voltagedata[i]
+
+        # figure out the 'average' of the max and min readings
+        avgv = (max_v + min_v) / 2
+        # also calculate the peak to peak measurements
+        vpp = max_v-min_v
+
         for i in range(len(voltagedata)):
             #remove 'dc bias', which we call the average read
             voltagedata[i] -= avgv
@@ -126,18 +122,18 @@ class XBeePowerData(xbeepacket):
             voltagedata[i] = (voltagedata[i] * MAINSVPP) / vpp
         return voltagedata
 
-    def get_ampdata(self):
+    def _get_ampdata(self):
         ampdata = [-1] * (len(self.xb.analog_samples ) -1)
         for i in range(len(ampdata)):
             ampdata[i]
-            ampdata[i] = self.xb.analog_sampled[i+1][self.currentsense]
+            ampdata[i] = self.xb.analog_samples[i+1][self.currentsense]
         # normalize current readings to amperes
         for i in range(len(ampdata)):
             # VREF is the hardcoded 'DC bias' value, its
             # about 492 but would be nice if we could somehow
             # get this data once in a while maybe using xbeeAPI
-            if vrefcalibration[xb.address_16]:
-                ampdata[i] -= vrefcalibration[xb.address_16]
+            if vrefcalibration[self.xb.address_16]:
+                ampdata[i] -= vrefcalibration[self.xb.address_16]
             else:
                 ampdata[i] -= vrefcalibration[0]
             # the CURRENTNORM is our normalizing constant
@@ -145,7 +141,7 @@ class XBeePowerData(xbeepacket):
             ampdata[i] /= CURRENTNORM
         return ampdata
 
-    def average_v(voltagedata)        
+    def average_v(self, voltagedata):
         # get max and min voltage and normalize the curve to '0'
         # to make the graph 'AC coupled' / signed
 
@@ -163,11 +159,11 @@ class XBeePowerData(xbeepacket):
         # also calculate the peak to peak measurements
         vpp =  max_v-min_v
 
-    def wattdata(voltagedata, ampdata)
+    def _get_wattdata(self, voltagedata, ampdata):
         # calculate instant. watts, by multiplying V*I for each sample point
         wattdata = [0] * len(voltagedata)
         for i in range(len(wattdata)):
-        wattdata[i] = voltagedata[i] * ampdata[i]
+            wattdata[i] = voltagedata[i] * ampdata[i]
         return wattdata
 
         # sum up the current drawn over one 1/60hz cycle
@@ -189,17 +185,14 @@ class XBeePowerData(xbeepacket):
         # Print out our most recent measurements
         #print str(xb.address_16)+"\tCurrent draw, in amperes: "+str(avgamp)
         #print "\tWatt draw, in VA: "+str(avgwatt)
-
         newatts = add_wattvalue(avgwatt, watts)
         #print "watts = %s" % ( newatts )
         print "averagewatts = %s" % ( watt_average(watts) )
-
         if (avgamp > 13):
             return            # hmm, bad data
-
         # retreive the history for this sensor
-        sensorhistory = sensorhistories.find(xb.address_16)
-    
+        sensorhistory = sensorhistories.find(self.xb.address_16)
+     
         # add up the delta-watthr used since last reading
         # Figure out how many watt hours were used since last reading
         elapsedseconds = time.time() - sensorhistory.lasttime
@@ -208,76 +201,22 @@ class XBeePowerData(xbeepacket):
         print "\t\tWh used in last ",elapsedseconds," seconds: ",dwatthr
         sensorhistory.addwatthr(dwatthr)
     
-        # Determine the minute of the hour (ie 6:42 -> '42')
-        currminute = (int(time.time())/60) % 10
-        # Figure out if its been five minutes since our last save
-        if (((time.time() - sensorhistory.fiveminutetimer) >= 60.0)
-            and (currminute % 2 == 0)
-            ):
-            wattsused = 0
-            whused = 0
-            for history in sensorhistories.sensorhistories:
-                wattsused += history.avgwattover5min()
-                whused += history.dayswatthr
-
         kwhused = whused/1000
         avgwatt = sensorhistory.avgwattover5min()
         cost = kwhused * ENERGY_PRICE 
         cost = "%.2f" % cost
-            
-        lcd_message = "Cur: %.2f" % avgwatt + "W\n%.2f" % kwhused + "kWh $" + cost
+
+    def powerdata(self):
+        self.xb = self._get_xbpacket()
+        voltagedata = self._get_voltagedata()
+        ampdata = self._get_ampdata()
+        return {'voltagedata': voltagedata,
+                'ampdata': ampdata 
+                } 
  
-    	lcd.clear()
-    	lcd.backlight(lcd.OFF)
-    	lcd.message(lcd_message);
-
-        # Average watts
-        pac = eeml.Pachube(API_URL, API_KEY)
-        pac.update(eeml.Data(0, 
-                             avgwatt, 
-                             minValue=0, 
-                             maxValue=None, 
-                             unit=eeml.Unit(name='watt', type='derivedSI', symbol='W',)
-                             )
-                  )
-        # total KWh
-        pac.update(eeml.Data(1, 
-                             kwhused, 
-                             minValue=0, 
-                             maxValue=None, 
-                             unit=eeml.Unit(name='kilowatthour', type='derivedSI', symbol='KWh',)
-                            )
-                  )
-
-        # Cost
-        pac.update(eeml.Data(2, 
-                             cost, 
-                             minValue=0, 
-                             maxValue=None, 
-                             unit=eeml.Unit(name='cost', type='contextDependentUnits', symbol='$')
-                             )
-                  )
-        try:
-            print "pachube update: try" 
-            pac.put()
-            print "pachube update: OK" 
-        except:
-            print "pachube update failed" 
-        # Print out debug data, Wh used in last 5 minutes
-        avgwattsused = sensorhistory.avgwattover5min()
-        #print time.strftime("%Y %m %d, %H:%M")+", "+str(sensorhistory.sensornum)+", "+str(sensorhistory.avgwattover5min())+"\n"
-               
-        # Lets log it! Seek to the end of our log file
-        if logfile:
-            logfile.seek(0, 2) # 2 == SEEK_END. ie, go to the end of the file
-            logfile.write(time.strftime("%Y %m %d, %H:%M")+", "+
-                          str(sensorhistory.sensornum)+", "+
-                          str(sensorhistory.avgwattover5min())+"\n")
-            logfile.flush()
-            
-        # Reset our 5 minute timer
-        sensorhistory.reset5mintimer()
-        
 if __name__ == "__main__":
-    pass
-
+    ser = serial.Serial(SERIALPORT, BAUDRATE)
+    xbee_power = XBeePowerData(ser)
+    while True:
+        print xbee_power.powerdata()
+    
