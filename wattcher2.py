@@ -111,27 +111,21 @@ class XBeePowerData():
             wattdata[i] = voltagedata[i] * ampdata[i]
         return wattdata
 
-        newatts = add_wattvalue(avgwatt, watts)
-        #print "watts = %s" % ( newatts )
-        print "averagewatts = %s" % ( watt_average(watts) )
-        if (avgamp > 13):
-            return            # hmm, bad data
-        # retreive the history for this sensor
-        sensorhistory = sensorhistories.find(self.xb.address_16)
-     
+    def _get_whdata(self, wattdata):
+        avgwatt = avgvalue(wattdata)
+        wattsused = 0
+        whused = 0
+        for history in sensorhistories.sensorhistories:
+            wattsused += history.avgwattover5min()
+            whused += history.dayswatthr
         # add up the delta-watthr used since last reading
         # Figure out how many watt hours were used since last reading
         elapsedseconds = time.time() - sensorhistory.lasttime
         dwatthr = (avgwatt * elapsedseconds) / (60.0 * 60.0)  # 60 seconds in 60 minutes = 1 hr
         sensorhistory.lasttime = time.time()
-        print "\t\tWh used in last ",elapsedseconds," seconds: ",dwatthr
         sensorhistory.addwatthr(dwatthr)
-    
-        kwhused = whused/1000
-        avgwatt = sensorhistory.avgwattover5min()
-        cost = kwhused * ENERGY_PRICE 
-        cost = "%.2f" % cost
-
+        return whused
+     
 if __name__ == "__main__":
     ser = serial.Serial(SERIALPORT, BAUDRATE)
     while True:
