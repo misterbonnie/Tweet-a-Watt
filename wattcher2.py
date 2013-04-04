@@ -1,38 +1,14 @@
 #!/usr/bin/env python
-import serial, time, datetime, sys
+import datetime
 import eeml
-from xbee import xbee
-import twitter
-import sensorhistory
-from time import sleep
 import optparse
-from Adafruit_I2C import Adafruit_I2C
-from Adafruit_MCP230xx import Adafruit_MCP230XX
-from Adafruit_CharLCDPlate import Adafruit_CharLCDPlate
+import serial
+import sys
+import time 
 
-import smbus
+from xbee import xbee
 
-# initialize the LCD plate
-# use busnum = 0 for raspi version 1 (256MB) and busnum = 1 for version 2
-lcd = Adafruit_CharLCDPlate(busnum = 1)
-  
-API_KEY = '4EfrclMeg7n7gRCHrPy5tECnRRKSAKxnL1QxbWhCWVRKZz0g'
-FEED = '121366'
-API_URL = '/v2/feeds/{feednum}.xml' .format(feednum = FEED)
 ENERGY_PRICE = 0.09160 # Batavia Electric
-
-usage = "usage: %prog [options] file"
-parser = optparse.OptionParser(usage=usage, description=__doc__)
-
-parser.add_option('-d', '--debug', action="store_true",
-                   help='''debug''',
-                   default=False)
-
-options, args = parser.parse_args()
-
-# for graphing stuff
-LOGFILENAME = "powerdatalog.csv"   # where we will store our flatfile data
-
 SERIALPORT = "/dev/ttyUSB0"    # the com/serial port the XBee is connected to
 BAUDRATE = 9600      # the baud rate we talk to the xbee
 CURRENTSENSE = 4       # which XBee ADC has current draw data
@@ -48,14 +24,17 @@ CURRENTNORM = 15.5  # conversion to amperes from ADC
 NUMWATTDATASAMPLES = 1800 # how many samples to watch in the plot window, 1 hr @ 2s samples
 MAXWATTLISTLEN = 200
 
-watts = []
 def watt_average(watts):
+    """Return an average value from a list of watt samples"""
     if len(watts) == 0:
         return None
     else:
         return sum(watts) / len(watts)
 
 def add_wattvalue(value, watts):
+    """Append a watt sample reading to a list of watts, limiting
+    to a maximum length
+    """
     if len(watts) < MAXWATTLISTLEN:
         watts.append(value)
     else:
@@ -63,38 +42,28 @@ def add_wattvalue(value, watts):
         watts.append(value)
     return watts
 
-# the 'main loop' runs once a second or so
+def avgvalue(data):
+    """Average amps from a list of amp values"""
+    # sum up the current drawn over one 1/60hz cycle
+    avg = 0
+    # 16.6 samples per second, one cycle = ~17 samples
+    # close enough for govt work :(
+    for i in range(17):
+        avg += abs(ampdata[i])
+    avg /= 17.0
+    return avg
 
 class XBeePowerData():
-    ''' get power stats from KillAWatt over XBee'''
-    def __init__(self, ser, voltsense=0, currentsense=4):
-        self.ser = ser
+    """Power information from KillAWatt, from XBee packet"""
+    def __init__(self, ser, voltsense=0, currentsense=4, debug=False):
+        self.xb = xb
         self.voltsense = voltsense
         self.currentsense = currentsense
+        self.voltagedata = self._get_voltagedata
+        self.ampdata = self._get_ampdata
 
-    def watt_average(self, watts):
-        if len(watts) == 0:
-            return None
-        else:
-            return sum(watts) / len(watts)
-
-    def add_wattvalue(self, value, watts):
-        if len(watts) < MAXWATTLISTLEN:
-            watts.append(value)
-        else:
-            watts.pop(0)
-            watts.append(value)
-        return watts
-
-    def _get_xbpacket(self):
-        # grab one packet from the xbee, or timeout
-        packet = xbee.find_packet(self.ser)
-        if not packet:
-            return
-        xb = xbee(packet)             # parse the packet
-        return xb
-   
     def _get_voltagedata(self):
+        """A list of voltages"""
         # we'll only store n-1 samples since the first one is usually messed up
         voltagedata = [-1] * (len(self.xb.analog_samples) - 1)
         # grab 1 thru n of the ADC readings, referencing the ADC constants
@@ -123,6 +92,7 @@ class XBeePowerData():
         return voltagedata
 
     def _get_ampdata(self):
+        """A list of Amps"""
         ampdata = [-1] * (len(self.xb.analog_samples ) -1)
         for i in range(len(ampdata)):
             ampdata[i]
@@ -160,31 +130,13 @@ class XBeePowerData():
         vpp =  max_v-min_v
 
     def _get_wattdata(self, voltagedata, ampdata):
+        """A list of Watt values"""
         # calculate instant. watts, by multiplying V*I for each sample point
         wattdata = [0] * len(voltagedata)
         for i in range(len(wattdata)):
             wattdata[i] = voltagedata[i] * ampdata[i]
         return wattdata
 
-        # sum up the current drawn over one 1/60hz cycle
-        avgamp = 0
-        # 16.6 samples per second, one cycle = ~17 samples
-        # close enough for govt work :(
-        for i in range(17):
-            avgamp += abs(ampdata[i])
-        avgamp /= 17.0
-
-        # sum up power drawn over one 1/60hz cycle
-        avgwatt = 0
-        # 16.6 samples per second, one cycle = ~17 samples
-        for i in range(17):         
-            avgwatt += abs(wattdata[i])
-        avgwatt /= 17.0
-
-
-        # Print out our most recent measurements
-        #print str(xb.address_16)+"\tCurrent draw, in amperes: "+str(avgamp)
-        #print "\tWatt draw, in VA: "+str(avgwatt)
         newatts = add_wattvalue(avgwatt, watts)
         #print "watts = %s" % ( newatts )
         print "averagewatts = %s" % ( watt_average(watts) )
@@ -206,17 +158,14 @@ class XBeePowerData():
         cost = kwhused * ENERGY_PRICE 
         cost = "%.2f" % cost
 
-    def powerdata(self):
-        self.xb = self._get_xbpacket()
-        voltagedata = self._get_voltagedata()
-        ampdata = self._get_ampdata()
-        return {'voltagedata': voltagedata,
-                'ampdata': ampdata 
-                } 
- 
 if __name__ == "__main__":
     ser = serial.Serial(SERIALPORT, BAUDRATE)
-    xbee_power = XBeePowerData(ser)
     while True:
-        print xbee_power.powerdata()
-    
+
+        # grab one packet from the xbee, or timeout
+        packet = xbee.find_packet(self.ser)
+        if not packet:
+            return
+        xb = xbee(packet)             # parse the packet
+        xbee_power = XBeePowerData(xb)
+         
