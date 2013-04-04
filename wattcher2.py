@@ -24,13 +24,6 @@ CURRENTNORM = 15.5  # conversion to amperes from ADC
 NUMWATTDATASAMPLES = 1800 # how many samples to watch in the plot window, 1 hr @ 2s samples
 MAXWATTLISTLEN = 200
 
-def watt_average(watts):
-    """Return an average value from a list of watt samples"""
-    if len(watts) == 0:
-        return None
-    else:
-        return sum(watts) / len(watts)
-
 def add_wattvalue(value, watts):
     """Append a watt sample reading to a list of watts, limiting
     to a maximum length
@@ -43,8 +36,7 @@ def add_wattvalue(value, watts):
     return watts
 
 def avgvalue(data):
-    """Average amps from a list of amp values"""
-    # sum up the current drawn over one 1/60hz cycle
+    """Average from a list of samples values over one 1/60Hz cycle"""
     avg = 0
     # 16.6 samples per second, one cycle = ~17 samples
     # close enough for govt work :(
@@ -110,24 +102,6 @@ class XBeePowerData():
             # that converts the ADC reading to Amperes
             ampdata[i] /= CURRENTNORM
         return ampdata
-
-    def average_v(self, voltagedata):
-        # get max and min voltage and normalize the curve to '0'
-        # to make the graph 'AC coupled' / signed
-
-        min_v = 1024     # XBee ADC is 10 bits, so max value is 1023
-        max_v = 0
-
-        for i in range(len(voltagedata)):
-            if (min_v > voltagedata[i]):
-                min_v = voltagedata[i]
-            if (max_v < voltagedata[i]):
-                max_v = voltagedata[i]
-
-        # figure out the 'average' of the max and min readings
-        avgv = (max_v + min_v) / 2
-        # also calculate the peak to peak measurements
-        vpp =  max_v-min_v
 
     def _get_wattdata(self, voltagedata, ampdata):
         """A list of Watt values"""
