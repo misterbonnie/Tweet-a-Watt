@@ -6,7 +6,15 @@ import serial
 import sys
 import time 
 
+import sensorhistory
+
 from xbee import xbee
+
+from Adafruit_I2C import Adafruit_I2C
+from Adafruit_MCP230xx import Adafruit_MCP230XX
+from Adafruit_CharLCDPlate import Adafruit_CharLCDPlate
+
+LOGFILENAME = 'xbee.log'
 
 ENERGY_PRICE = 0.09160 # Batavia Electric
 SERIALPORT = "/dev/ttyUSB0"    # the com/serial port the XBee is connected to
@@ -47,12 +55,24 @@ def avgvalue(data):
 
 class XBeePowerData():
     """Power information from KillAWatt, from XBee packet"""
-    def __init__(self, ser, voltsense=0, currentsense=4, debug=False):
+    def __init__(self, ser, voltsense=0, currentsense=4, debug=False, logfile=LOGFILENAME):
         self.xb = xb
         self.voltsense = voltsense
         self.currentsense = currentsense
         self.voltagedata = self._get_voltagedata
         self.ampdata = self._get_ampdata
+        self.currminute = (int(time.time())/60) % 10
+
+        try:
+            logfile = open(LOGFILENAME, 'r+')
+        except IOError:
+            # didn't exist yet
+            logfile = open(LOGFILENAME, 'w+')
+            logfile.write("#Date, time, sensornum, avgWatts\n");
+            logfile.flush()
+
+        self.sensorhistories = sensorhistory.SensorHistories(logfile)
+        self.sensorhistory = self.sensorhistories.find(xb.address_16)
 
     def _get_voltagedata(self):
         """A list of voltages"""
@@ -113,22 +133,31 @@ class XBeePowerData():
         return avgwatt
 
     def _get_whdata(self, avgwatt):
-        avgwatt = avgvalue(wattdata)
         wattsused = 0
         whused = 0
-        for history in sensorhistories.sensorhistories:
-            wattsused += history.avgwattover5min()
-            whused += history.dayswatthr
+        if (((time.time() - self.sensorhistory.fiveminutetimer) >= 60.0)
+            and (self.currminute % 5 == 0)
+            ):
+            wattsused = 0
+            whused = 0
+            for history in self.sensorhistories.sensorhistories:
+                wattsused += history.avgwattover5min()
+                whused += history.dayswatthr
         # add up the delta-watthr used since last reading
         # Figure out how many watt hours were used since last reading
-        elapsedseconds = time.time() - sensorhistory.lasttime
+        elapsedseconds = time.time() - self.sensorhistory.lasttime
         dwatthr = (avgwatt * elapsedseconds) / (60.0 * 60.0)  # 60 seconds in 60 minutes = 1 hr
-        sensorhistory.lasttime = time.time()
-        sensorhistory.addwatthr(dwatthr)
+        self.sensorhistory.lasttime = time.time()
+        self.sensorhistory.addwatthr(dwatthr)
         return whused
      
 if __name__ == "__main__":
+    # set up the LCD
+    lcd = Adafruit_CharLCDPlate(busnum = 1)
+
+    # set up serial connection
     ser = serial.Serial(SERIALPORT, BAUDRATE)
+
     while True:
 
         # grab one packet from the xbee, or timeout
@@ -140,6 +169,11 @@ if __name__ == "__main__":
             xbee_power = XBeePowerData(xb)
             ampdata = xbee_power._get_ampdata()
             voltagedata = xbee_power._get_voltagedata()
-            print ampdata, voltagedata
-            print xbee_power._get_wattdata(voltagedata, ampdata)
+            avgwatt = xbee_power._get_wattdata(voltagedata, ampdata)
+            whdata = xbee_power._get_whdata(avgwatt)
+            lcd_message = "Cur: %.2f" % avgwatt 
+            lcd.clear()
+            lcd.backlight(lcd.OFF)
+            lcd.message(lcd_message);
+            print whdata
          
