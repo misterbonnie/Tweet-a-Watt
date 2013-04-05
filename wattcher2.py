@@ -41,7 +41,7 @@ def avgvalue(data):
     # 16.6 samples per second, one cycle = ~17 samples
     # close enough for govt work :(
     for i in range(17):
-        avg += abs(ampdata[i])
+        avg += abs(data[i])
     avg /= 17.0
     return avg
 
@@ -109,9 +109,10 @@ class XBeePowerData():
         wattdata = [0] * len(voltagedata)
         for i in range(len(wattdata)):
             wattdata[i] = voltagedata[i] * ampdata[i]
-        return wattdata
+        avgwatt = avgvalue(wattdata)
+        return avgwatt
 
-    def _get_whdata(self, wattdata):
+    def _get_whdata(self, avgwatt):
         avgwatt = avgvalue(wattdata)
         wattsused = 0
         whused = 0
@@ -131,9 +132,14 @@ if __name__ == "__main__":
     while True:
 
         # grab one packet from the xbee, or timeout
-        packet = xbee.find_packet(self.ser)
+        packet = xbee.find_packet(ser)
         if not packet:
-            return
-        xb = xbee(packet)             # parse the packet
-        xbee_power = XBeePowerData(xb)
+            continue
+        else:
+            xb = xbee(packet)             # parse the packet
+            xbee_power = XBeePowerData(xb)
+            ampdata = xbee_power._get_ampdata()
+            voltagedata = xbee_power._get_voltagedata()
+            print ampdata, voltagedata
+            print xbee_power._get_wattdata(voltagedata, ampdata)
          
