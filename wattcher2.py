@@ -34,7 +34,7 @@ MAXWATTLISTLEN = 200
 
 def add_wattvalue(value, watts):
     """Append a watt sample reading to a list of watts, limiting
-    to a maximum length
+    to a maximum length (this was for graphing
     """
     if len(watts) < MAXWATTLISTLEN:
         watts.append(value)
@@ -63,9 +63,6 @@ def logfile_init(filename):
         logfile.flush()
     return logfile
 
-
-
-
 class XBeePowerData():
     """Power information from KillAWatt, from XBee packet"""
     def __init__(self, ser, sensorhistories=None, voltsense=0, currentsense=4, debug=False, logfile=LOGFILENAME):
@@ -83,6 +80,8 @@ class XBeePowerData():
             self.sensorhistories = sensorhistories
 
         self.sensorhistory = self.sensorhistories.find(xb.address_16)
+        self.whused = 0
+        self.wattsused = 0
 
     def _get_voltagedata(self):
         """A list of voltages"""
@@ -144,24 +143,29 @@ class XBeePowerData():
         self.avgwatt = avgvalue(wattdata)
         return self.avgwatt
 
-    def _get_whdata(self, avgwatt):
-        wattsused = 0
-        whused = 0
+    def _get_whdata(self, avgwatt, save_log=False):
+        '''return deltawatthours'''
+        currminute = (int(time.time())/60) % 10
         if (((time.time() - self.sensorhistory.fiveminutetimer) >= 60.0)
-            and (self.currminute % 5 == 0)
+            and (currminute % 5 == 0)
             ):
-            wattsused = 0
-            whused = 0
-            for history in self.sensorhistories.sensorhistories:
-                wattsused += history.avgwattover5min()
-                whused += history.dayswatthr
+            self.sensorhistory.reset5mintimer()
+        for history in self.sensorhistories.sensorhistories:
+            self.wattsused += history.avgwattover5min()
+            self.whused += history.dayswatthr
         # add up the delta-watthr used since last reading
         # Figure out how many watt hours were used since last reading
         elapsedseconds = time.time() - self.sensorhistory.lasttime
         dwatthr = (avgwatt * elapsedseconds) / (60.0 * 60.0)  # 60 seconds in 60 minutes = 1 hr
-        self.sensorhistory.lasttime = time.time()
         self.sensorhistory.addwatthr(dwatthr)
-        return whused
+        self.sensorhistory.lasttime = time.time()
+        logfile.seek(0, 2) # 2 == SEEK_END. ie, go to the end of the file
+        logfile.write(time.strftime("%Y %m %d, %H:%M")+", "+
+                                                     str(self.sensorhistory.sensornum)+", "+
+                                                     str(self.sensorhistory.avgwattover5min())+"\n")
+        logfile.flush()
+        print self.wattsused
+        return dwatthr
 
 class WattHourData():
     def __init__(xbee_power):
@@ -173,7 +177,7 @@ if __name__ == "__main__":
     logfile = logfile_init(LOGFILENAME)
 
     # set up the sensorhistories
-    sensorhistories = sensorhistory.sensorhistories(logfile)
+    sensorhistories = sensorhistory.SensorHistories(logfile)
 
     # set up the LCD
     lcd = Adafruit_CharLCDPlate(busnum = 1)
@@ -193,10 +197,9 @@ if __name__ == "__main__":
             ampdata = xbee_power._get_ampdata()
             voltagedata = xbee_power._get_voltagedata()
             avgwatt = xbee_power._get_wattdata(voltagedata, ampdata)
-            whdata, whused = xbee_power._get_whdata(avgwatt)
+            deltawatthours = xbee_power._get_whdata(avgwatt)
             lcd_message = "Cur: %.2f" % avgwatt 
             lcd.clear()
             lcd.backlight(lcd.OFF)
-            lcd.message(lcd_message);
-            print whdata
+            lcd.message(lcd_message)
          
