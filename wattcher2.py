@@ -101,7 +101,8 @@ class XBeePowerData():
             voltagedata[i] -= avgv
             # We know that the mains voltage is 120Vrms = +-170Vpp
             voltagedata[i] = (voltagedata[i] * MAINSVPP) / vpp
-        return voltagedata
+            self.voltagedata = voltagedata
+        return self.voltagedata
 
     def _get_ampdata(self):
         """A list of Amps"""
@@ -121,7 +122,8 @@ class XBeePowerData():
             # the CURRENTNORM is our normalizing constant
             # that converts the ADC reading to Amperes
             ampdata[i] /= CURRENTNORM
-        return ampdata
+            self.ampdata = ampdata
+        return self.ampdata
 
     def _get_wattdata(self, voltagedata, ampdata):
         """A list of Watt values"""
@@ -129,8 +131,8 @@ class XBeePowerData():
         wattdata = [0] * len(voltagedata)
         for i in range(len(wattdata)):
             wattdata[i] = voltagedata[i] * ampdata[i]
-        avgwatt = avgvalue(wattdata)
-        return avgwatt
+        self.avgwatt = avgvalue(wattdata)
+        return self.avgwatt
 
     def _get_whdata(self, avgwatt):
         wattsused = 0
@@ -150,6 +152,10 @@ class XBeePowerData():
         self.sensorhistory.lasttime = time.time()
         self.sensorhistory.addwatthr(dwatthr)
         return whused
+
+class WattHourData():
+    def __init__(xbee_power):
+        pass
      
 if __name__ == "__main__":
     # set up the LCD
@@ -170,7 +176,7 @@ if __name__ == "__main__":
             ampdata = xbee_power._get_ampdata()
             voltagedata = xbee_power._get_voltagedata()
             avgwatt = xbee_power._get_wattdata(voltagedata, ampdata)
-            whdata = xbee_power._get_whdata(avgwatt)
+            whdata, whused = xbee_power._get_whdata(avgwatt)
             lcd_message = "Cur: %.2f" % avgwatt 
             lcd.clear()
             lcd.backlight(lcd.OFF)
