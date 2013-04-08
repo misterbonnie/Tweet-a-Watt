@@ -53,9 +53,22 @@ def avgvalue(data):
     avg /= 17.0
     return avg
 
+def logfile_init(filename):
+    try:
+        logfile = open(LOGFILENAME, 'r+')
+    except IOError:
+        # didn't exist yet
+        logfile = open(LOGFILENAME, 'w+')
+        logfile.write("#Date, time, sensornum, avgWatts\n");
+        logfile.flush()
+    return logfile
+
+
+
+
 class XBeePowerData():
     """Power information from KillAWatt, from XBee packet"""
-    def __init__(self, ser, voltsense=0, currentsense=4, debug=False, logfile=LOGFILENAME):
+    def __init__(self, ser, sensorhistories=None, voltsense=0, currentsense=4, debug=False, logfile=LOGFILENAME):
         self.xb = xb
         self.voltsense = voltsense
         self.currentsense = currentsense
@@ -63,15 +76,12 @@ class XBeePowerData():
         self.ampdata = self._get_ampdata
         self.currminute = (int(time.time())/60) % 10
 
-        try:
-            logfile = open(LOGFILENAME, 'r+')
-        except IOError:
-            # didn't exist yet
-            logfile = open(LOGFILENAME, 'w+')
-            logfile.write("#Date, time, sensornum, avgWatts\n");
-            logfile.flush()
+        if sensorhistories == None:
+            logfile = logfile_init(LOGFILENAME)
+            self.sensorhistories = sensorhistory.SensorHistories(logfile)
+        else:
+            self.sensorhistories = sensorhistories
 
-        self.sensorhistories = sensorhistory.SensorHistories(logfile)
         self.sensorhistory = self.sensorhistories.find(xb.address_16)
 
     def _get_voltagedata(self):
@@ -158,6 +168,13 @@ class WattHourData():
         pass
      
 if __name__ == "__main__":
+
+    # set up the log
+    logfile = logfile_init(LOGFILENAME)
+
+    # set up the sensorhistories
+    sensorhistories = sensorhistory.sensorhistories(logfile)
+
     # set up the LCD
     lcd = Adafruit_CharLCDPlate(busnum = 1)
 
@@ -172,7 +189,7 @@ if __name__ == "__main__":
             continue
         else:
             xb = xbee(packet)             # parse the packet
-            xbee_power = XBeePowerData(xb)
+            xbee_power = XBeePowerData(xb, sensorhistories=sensorhistories)
             ampdata = xbee_power._get_ampdata()
             voltagedata = xbee_power._get_voltagedata()
             avgwatt = xbee_power._get_wattdata(voltagedata, ampdata)
