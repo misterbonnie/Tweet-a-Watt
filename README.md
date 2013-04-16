@@ -2,8 +2,24 @@ Tweet-a-Watt
 ============
 Original description of project by ladyada (Limor Fried of Adafruit): This project documents my adventures in learning how to wire up my home for wireless power monitoring. I live in a rented apartment so I don't have hacking-access to a meter or breaker panel. Since I'm still very interested in measuring my power usage on a long term basis, I built wireless outlet reporters. Building your own power monitor isn't too tough and can save money but I'm not a fan of sticking my fingers into 120V power. Instead, I'll used the existing Kill-a-watt power monitor, which works great and is available at my local hardware store.
 
-RaspiWatt specific instructions (Raspberry Pi + Kill-a-Watt)
-============================================================
+RaspiWatt blog post:
+====================
+Tweet-a-Watt modified to run on Raspberry Pi
+http://www.element14.com/community/groups/raspberry-pi/blog/2013/04/05/raspiwatt-discover-power-consumption-using-a-kill-a-watt-pi
+
+References for RaspiWatt:
+=========================
+Send Raspberry Pi Data to COSM: Necessary Packages
+http://learn.adafruit.com/send-raspberry-pi-data-to-cosm/necessary-packages
+
+Adafruit 16x2 Character LCD + Keypad for Raspberry Pi: Usage
+http://learn.adafruit.com/adafruit-16x2-character-lcd-plus-keypad-for-raspberry-pi/usage
+
+Tweet-a-Watt software:
+http://www.ladyada.net/make/tweetawatt/software.html
+
+Install instructions for RaspiWatt:
+==================================
 <pre>
 # Install system packages
 cd ~/
