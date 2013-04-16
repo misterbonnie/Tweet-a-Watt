@@ -4,6 +4,7 @@ Original description of project by ladyada (Limor Fried of Adafruit): This proje
 
 RaspiWatt specific instructions (Raspberry Pi + Kill-a-Watt)
 ============================================================
+<pre>
 # Install system packages
 cd ~/
 mkdir dev
@@ -47,3 +48,4 @@ lcd = Adafruit_CharLCDPlate(busnum = 1)
 git clone https://github.com/misterbonnie/Tweet-a-Watt.git
 cd Tweet-a-Watt
 PYTHON_PATH=$HOME/dev/Adafruit-Raspberry-Pi-Python-Code/Adafruit_CharLCDPlate sudo python wattcher_cosm.py
+</pre>
